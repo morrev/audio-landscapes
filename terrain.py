@@ -5,6 +5,9 @@ import numpy as np
 from pyqtgraph.Qt import QtCore, QtGui
 import pyqtgraph.opengl as gl
 import sys
+import librosa
+import pyaudio
+import wave
 
 SCREENDIM = (0, 110, 1920, 1080)
 CAMERA_DISTANCE = 70
@@ -44,30 +47,30 @@ class Terrain(object):
 
         # setup the view window
         self.app = QtGui.QApplication(sys.argv)
-        self.w = gl.GLViewWidget()
-        self.w.setGeometry(*SCREENDIM)
-        self.w.show()
-        self.w.setWindowTitle('Terrain')
-        self.w.setCameraPosition(distance = CAMERA_DISTANCE, elevation = CAMERA_ELEVATION)
+        self.window = gl.GLViewWidget()
+        self.window.setGeometry(*SCREENDIM)
+        self.window.show()
+        self.window.setWindowTitle('Terrain')
+        self.window.setCameraPosition(distance = CAMERA_DISTANCE, elevation = CAMERA_ELEVATION)
         
         self._setverts()
         self._setfaces()
         
         # create the mesh item
-        self.m1 = gl.GLMeshItem(
+        self.mesh = gl.GLMeshItem(
             vertexes = self.verts,
             faces = self.faces, faceColors = self.colors,
             smooth=False, drawEdges=True,
         )
-        self.m1.setGLOptions('additive')
-        self.w.addItem(self.m1)
+        self.mesh.setGLOptions('additive')
+        self.window.addItem(self.mesh)
 
     def update(self):
         """
         update the mesh and shift the noise each time
         """
         self.verts[:,2] = np.random.normal(loc = 0, scale = NOISE, size = self.verts.shape[0])
-        self.m1.setMeshData(
+        self.mesh.setMeshData(
             vertexes=self.verts, faces=self.faces, faceColors=self.colors
         )
 
@@ -89,5 +92,21 @@ class Terrain(object):
         self.update()
 
 if __name__ == '__main__':
+    #print("Preparing audio data...")
+    #y, sample_rate = librosa.load('data/Toccata_et_Fugue_BWV565.ogg')
+    #S = librosa.feature.melspectrogram(y=y, sr=sample_rate)
+    #S_dB = librosa.power_to_db(S, ref=np.max)
+    #print("Done")
+    #print(S_dB.shape)
+    #CHUNK = 1024
+    #wf = wave.open("Francois_Couperin_L'Art_de_toucher_le_Clavecin.wav", 'rb')
+    #p = pyaudio.PyAudio()
+    #stream = p.open(format = p.get_format_from_width(wf.getsampwidth()),
+    #        channels = wf.getnchannels(),
+    #        rate = wf.getframerate(),
+    #        output = True, 
+    #        frames_per_buffer = CHUNK)
+
     t = Terrain()
     t.animation()
+
