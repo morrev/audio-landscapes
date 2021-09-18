@@ -1,7 +1,8 @@
 # music_landscapes
 
 Visual landscapes from audio files.
-![Example](/images/example.png)
+
+![Example](/images/example_landscape.png)
 
 
 #### attribution
