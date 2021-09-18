@@ -1,5 +1,5 @@
 """
-3D mesh with noise to simulate a terrain
+3D mesh responding to music
 """
 import numpy as np
 from pyqtgraph.Qt import QtCore, QtGui
@@ -13,12 +13,17 @@ import wave
 SCREENDIM = (0, 110, 1920, 1080)
 CAMERA_DISTANCE = 70
 CAMERA_ELEVATION = 8
-STEPSIZE = 1
-REFRESH_MS = 8 #Number of milliseconds between refresh: setting too high results in audio buffer underrun
+STEPSIZE = 0.8 #Lower = more granular mesh (more compute)
+REFRESH_MS = 2 #Number of milliseconds between refresh: setting too high results in audio buffer underrun
 X_MIN = -16; X_MAX = 16
 Y_MIN = -16; Y_MAX = 16
-AUDIO_FILE = './data/francois_couperin.wav'
-#NOISE = 0.8
+#AUDIO_FILE = './data/Bach_Canon_2_from_Musical_offering.wav' 
+AUDIO_FILE = './data/Chopin_op28_excerpt.wav'
+#AUDIO_FILE = './data/francois_couperin.wav'
+IGNORE_THRESHOLD = 0.5 #Higher ignore threshold --> plot less audio noise in the 3D mesh
+PREV_WEIGHT = 0.5 #Weight to assign to previous observation (to 'smooth' peaks)
+TRANSLUCENCY = 0.9 #Translucency of faces in mesh
+SCALE_DOWN = 0.005 #Weight to scale down the heights (smaller = less high)
 
 class Terrain(object):
     def _setverts(self):
@@ -38,16 +43,17 @@ class Terrain(object):
         """Create triangular faces"""
         faces = []
         colors = []
-        for m in range(self.grid_width - 1):
-            yoff = m * self.grid_width
-            for n in range(self.grid_width - 1):
-                faces.append([n + yoff, yoff + n + self.grid_width, yoff + n + self.grid_width + 1])
-                faces.append([n + yoff, yoff + n + 1, yoff + n + self.grid_width + 1])
-                colors.append([n / self.grid_width, 1 - n / self.grid_width, m / self.grid_width, 0.7])
-                colors.append([n / self.grid_width, 1 - n / self.grid_width, m / self.grid_width, 0.8])
+        for y in range(self.grid_width - 1):
+            yoff = y * self.grid_width
+            for x in range(self.grid_width - 1):
+                faces.append([x + yoff, x + yoff + self.grid_width, x + yoff + self.grid_width + 1])
+                faces.append([x + yoff, x + yoff + 1, x + yoff + 1 + self.grid_width])
+                colors.append([x / self.grid_width, 1 - x / self.grid_width, y / self.grid_width, TRANSLUCENCY-0.1])
+                colors.append([x / self.grid_width, 1 - x / self.grid_width, y / self.grid_width, TRANSLUCENCY])
         self.faces = np.array(faces)
         self.colors = np.array(colors)
-    
+        print(self.faces.shape)
+
     def _setaudiostream(self):
         """Set audio stream"""
         self.wf = wave.open(AUDIO_FILE, 'rb')
@@ -100,10 +106,19 @@ class Terrain(object):
         # Skip every nchannel entry in the bytes array to extract a single channel
         # Then sample every other byte to match the 3D grid mesh size (chunk)
         # Add 128 since 'b' datatype supports -128 to 128, and we want positive jumps in the grid mesh
-        channel_zero = (data[0::self.wf.getnchannels()][::self.wf.getsampwidth()] + 128)/256
+        channel_zero = data[0::self.wf.getnchannels()]
+        channel_one = data[1::self.wf.getnchannels()]
+        
+        channel = ((channel_zero + channel_one)[::self.wf.getsampwidth()] + 128) * SCALE_DOWN
+        #channel_zero = (data[0::self.wf.getnchannels()][::self.wf.getsampwidth()] + 128) * SCALE_DOWN
+
+        # Crude denoising
+        channel[channel < IGNORE_THRESHOLD] = 0
 
         # Set mesh heights
-        self.verts[:,2] = self.verts[:,2]*0.3 + (channel_zero * 2)*0.7 #np.random.normal(loc = 0, scale = NOISE, size = self.verts.shape[0])
+        new_height = self.verts[:,2]*PREV_WEIGHT + (channel * 2)*(1-PREV_WEIGHT) # weight previous height
+        self.verts[:,2] = new_height
+
         self.mesh.setMeshData(
             vertexes=self.verts, faces=self.faces, faceColors=self.colors
         )
