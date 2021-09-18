@@ -1,6 +1,7 @@
-# Audio-Spectrum-Analyzer-in-Python
-A series of Jupyter notebooks and python files which stream audio from a microphone using pyaudio.
+# music_landscapes
 
-Part 1 is a notebook which streams audio and displays the waveform with matplotlib.
+Visual landscapes from audio files.
 
-Part 2 adds a spectrum viewer using scipy.fftpack to compute the FFT.
+#### attribution
+
+Base code from markjay4k/Audio-Spectrum-Analyzer-in-Python
