@@ -6,6 +6,8 @@ Sandbox project for:
 * familiarization w/ audio formats (buffering, channels, underruns)
 * exploration of 3D viz options
 
+Converts .wav stream to numpy array defining vertex heights on 3D triangle mesh:
+
 ![Example](/images/example_landscape.png)
 
 Useful links:
