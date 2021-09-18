@@ -10,8 +10,8 @@ Sandbox project for:
 
 Useful links:
 ----
-[Audio buffer explanation](https://techpubs.jurassic.nl/manuals/0650/developer/DMSDK_PG/sgi_html/ch08.html)
-[PyAudio docs](http://people.csail.mit.edu/hubert/pyaudio/docs/)
+* [Audio buffer explanation](https://techpubs.jurassic.nl/manuals/0650/developer/DMSDK_PG/sgi_html/ch08.html)
+* [PyAudio docs](http://people.csail.mit.edu/hubert/pyaudio/docs/)
 
 Attribution/credits:
 ----
