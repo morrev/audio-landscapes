@@ -14,17 +14,18 @@ from scipy import signal
 SCREENDIM = (0, 110, 1920, 1080)
 CAMERA_DISTANCE = 70
 CAMERA_ELEVATION = 8
-STEPSIZE = 0.8 #Lower = more granular mesh (more compute)
-REFRESH_MS = 4 #Number of milliseconds between refresh: setting too high results in audio buffer underrun
+STEPSIZE = 1 #Lower = more granular mesh (more compute)
+REFRESH_MS = 10 #Number of milliseconds between refresh: setting too high results in audio buffer underrun
 X_MIN = -16; X_MAX = 16
 Y_MIN = -16; Y_MAX = 16
-#AUDIO_FILE = './data/Bach_Canon_2_from_Musical_offering.wav' 
-AUDIO_FILE = './data/Chopin_op28_excerpt.wav'
+AUDIO_FILE = './data/Bach_Canon_2_from_Musical_offering.wav' 
+#AUDIO_FILE = './data/Chopin_op28_excerpt.wav'
 #AUDIO_FILE = './data/francois_couperin.wav'
+VISUALIZER = 'spectrogram'
 IGNORE_THRESHOLD = 1.1 #Higher ignore threshold --> plot less audio noise in the 3D mesh
 PREV_WEIGHT = 0.5 #Weight to assign to previous observation (to 'smooth' peaks)
 TRANSLUCENCY = 0.9 #Translucency of faces in mesh
-SCALE = 0.008 #Weight to scale the heights (smaller = shallower mesh)
+SCALE = 0.00005 #Weight to scale the heights (smaller = shallower mesh)
     
 def to_channel_matrix(data, n_channels):
     """Return channels given frames of data"""
@@ -40,6 +41,40 @@ def to_mono(channel_matrix, agg_function = np.mean):
     return agged_matrix
 
 class Terrain(object):
+    def __init__(self, visualizer = 'spectrogram'):
+        """Initialize the graphics window, mesh, and audio stream"""
+        # Set up the view window
+        self.app = QtGui.QApplication(sys.argv)
+        self.window = gl.GLViewWidget()
+        self.window.setGeometry(*SCREENDIM)
+        self.window.show()
+        self.window.setWindowTitle('Terrain')
+        self.window.setCameraPosition(distance = CAMERA_DISTANCE, elevation = CAMERA_ELEVATION)
+        
+        self._setverts()
+        self._setfaces()
+        self.visualizer = self._setvisualizer(visualizer)
+
+        # Create the mesh item
+        self.mesh = gl.GLMeshItem(
+            vertexes = self.verts,
+            faces = self.faces, faceColors = self.colors,
+            smooth=False, drawEdges=True,
+        )
+        self.mesh.setGLOptions('additive')
+        self.window.addItem(self.mesh)
+    
+        # Initialize audio stream
+        self._setaudiostream()
+
+    def _setvisualizer(self, visualizer):
+        if visualizer == 'spectrogram':
+            return self._get_spectrogram_heights
+        elif visualizer == 'bytes':
+            return self._get_wav_heights
+        else:
+            raise NotImplementedError
+
     def _setverts(self):
         """Create array of vertices"""
         xx = np.arange(X_MIN, X_MAX, STEPSIZE)
@@ -86,31 +121,6 @@ class Terrain(object):
         self.num_bytes = self.wf.getnchannels() * self.wf.getsampwidth() * self.chunk
         print(f"Bytes per update: {self.num_bytes}")
 
-    def __init__(self):
-        """Initialize the graphics window, mesh, and audio stream"""
-        # Set up the view window
-        self.app = QtGui.QApplication(sys.argv)
-        self.window = gl.GLViewWidget()
-        self.window.setGeometry(*SCREENDIM)
-        self.window.show()
-        self.window.setWindowTitle('Terrain')
-        self.window.setCameraPosition(distance = CAMERA_DISTANCE, elevation = CAMERA_ELEVATION)
-        
-        self._setverts()
-        self._setfaces()
-        
-        # Create the mesh item
-        self.mesh = gl.GLMeshItem(
-            vertexes = self.verts,
-            faces = self.faces, faceColors = self.colors,
-            smooth=False, drawEdges=True,
-        )
-        self.mesh.setGLOptions('additive')
-        self.window.addItem(self.mesh)
-    
-        # Initialize audio stream
-        self._setaudiostream()
-
     def _get_wav_heights(self, mono):
         """Return proposed mesh heights based on raw mono (single channel) values from wav"""
         # Then sample every other byte to match the 3D grid mesh size (chunk)
@@ -120,9 +130,12 @@ class Terrain(object):
 
     def _get_spectrogram_heights(self, mono):
         """Return proposed mesh heights based on spectrogram, given mono values from wav"""
-        frequencies, times, spectrogram = signal.spectrogram(mono) 
-        h_pad = self.chunk - frequencies.shape[0]
-        proposed_heights = self.chunk - np.pad(frequencies, (0,h_pad))
+        frequencies, times, S = signal.spectrogram(mono, nperseg = 64)
+        #h_pad = self.grid_width - S.shape[1]
+        #v_pad = self.grid_height - S.shape[0]
+        S = S[:self.grid_height,:self.grid_width]
+        #proposed_heights = np.pad(frequencies, ((0,v_pad),(0,h_pad))).flatten()
+        proposed_heights = S.flatten() * SCALE
         return proposed_heights
 
     def update(self):
@@ -132,11 +145,10 @@ class Terrain(object):
         channel_matrix = to_channel_matrix(data, n_channels = self.wf.getnchannels())
         mono = to_mono(channel_matrix, np.sum)  
 
-        #proposed_heights = self._get_wav_heights(mono)
-        proposed_heights = self._get_spectrogram_heights(mono)
+        proposed_heights = self.visualizer(mono)
 
         # Crude denoising
-        proposed_heights[proposed_heights < IGNORE_THRESHOLD] = 0
+        #proposed_heights[proposed_heights < IGNORE_THRESHOLD] = 0
 
         # Set mesh heights
         new_heights = self.verts[:,2]*PREV_WEIGHT + proposed_heights*(1-PREV_WEIGHT) # weight previous height
@@ -181,5 +193,5 @@ if __name__ == '__main__':
     #S_dB = librosa.power_to_db(S, ref=np.max)
     #print("Done")
     #print(S_dB.shape)
-    t = Terrain()
+    t = Terrain(visualizer = VISUALIZER)
     t.animation()
