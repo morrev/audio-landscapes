@@ -9,6 +9,7 @@ import sys
 import librosa
 import pyaudio
 import wave
+from scipy import signal
 
 SCREENDIM = (0, 110, 1920, 1080)
 CAMERA_DISTANCE = 70
@@ -23,7 +24,20 @@ AUDIO_FILE = './data/Chopin_op28_excerpt.wav'
 IGNORE_THRESHOLD = 1.1 #Higher ignore threshold --> plot less audio noise in the 3D mesh
 PREV_WEIGHT = 0.5 #Weight to assign to previous observation (to 'smooth' peaks)
 TRANSLUCENCY = 0.9 #Translucency of faces in mesh
-SCALE_DOWN = 0.008 #Weight to scale down the heights (smaller = less high)
+SCALE = 0.008 #Weight to scale the heights (smaller = shallower mesh)
+    
+def to_channel_matrix(data, n_channels):
+    """Return channels given frames of data"""
+    # todo: dynamic dtype? {1:np.int8, 2:np.int16, 4:np.int32}[self.wf.getsampwidth()]
+    data = np.frombuffer(data, dtype='b')
+    # Skip every nchannel entry in the frame array to extract channels as rows
+    channel_matrix = np.stack([data[i::n_channels] for i in range(n_channels)], axis = 0)
+    return channel_matrix
+
+def to_mono(channel_matrix, agg_function = np.mean):
+    """Aggregate multichannel matrix (from e.g. into mono"""
+    agged_matrix = agg_function(channel_matrix, axis = 0)
+    return agged_matrix
 
 class Terrain(object):
     def _setverts(self):
@@ -97,30 +111,29 @@ class Terrain(object):
         # Initialize audio stream
         self._setaudiostream()
 
-    def _get_channels(self, data):
-        """Return channels given frames of data"""
-        #print({1:np.int8, 2:np.int16, 4:np.int32}[self.wf.getsampwidth()])
-        data = np.frombuffer(data, dtype='b')
-        n_channels = self.wf.getnchannels()
-        # Skip every nchannel entry in the bytes array to extract a single channel
-        channels = [data[i::n_channels] for i in range(n_channels)]
-        return channels
-
-    def _get_wav_byte_heights(self, data):
-        """Return proposed mesh heights based on bytes in frames from data"""
+    def _get_wav_heights(self, mono):
+        """Return proposed mesh heights based on raw mono (single channel) values from wav"""
         # Then sample every other byte to match the 3D grid mesh size (chunk)
         # Add 128 since 'b' datatype supports -128 to 128, and we want positive jumps in the grid mesh
-        channels = self._get_channels(data)
-        proposed_heights = ((channels[0]+channels[1])[::self.wf.getsampwidth()] + 128) * SCALE_DOWN
+        proposed_heights = (mono[::self.wf.getsampwidth()] + 128) * SCALE
+        return proposed_heights
+
+    def _get_spectrogram_heights(self, mono):
+        """Return proposed mesh heights based on spectrogram, given mono values from wav"""
+        frequencies, times, spectrogram = signal.spectrogram(mono) 
+        h_pad = self.chunk - frequencies.shape[0]
+        proposed_heights = self.chunk - np.pad(frequencies, (0,h_pad))
         return proposed_heights
 
     def update(self):
         """Update the mesh heights with audio stream"""
         # Every read of data contains chunk * sample_width * n_channels bytes
         data = self.wf.readframes(self.chunk)
-       
-        #frequencies, times, spectogram = signal 
-        proposed_heights = self._get_wav_byte_heights(data)
+        channel_matrix = to_channel_matrix(data, n_channels = self.wf.getnchannels())
+        mono = to_mono(channel_matrix, np.sum)  
+
+        #proposed_heights = self._get_wav_heights(mono)
+        proposed_heights = self._get_spectrogram_heights(mono)
 
         # Crude denoising
         proposed_heights[proposed_heights < IGNORE_THRESHOLD] = 0
@@ -143,7 +156,6 @@ class Terrain(object):
         free = self.stream.get_write_available()
         if free > self.chunk: # Play silence if more free space in buffer than the chunk
             self.stream.write(chr(0) * (free - self.chunk))
-
 
     def start(self):
         """
