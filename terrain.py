@@ -22,7 +22,7 @@ AUDIO_FILE = './data/Bach_Canon_2_from_Musical_offering.wav'
 #AUDIO_FILE = './data/Chopin_op28_excerpt.wav'
 #AUDIO_FILE = './data/francois_couperin.wav'
 VISUALIZER = 'spectrogram'
-IGNORE_THRESHOLD = 1.1 #Higher ignore threshold --> plot less audio noise in the 3D mesh
+IGNORE_THRESHOLD = 0.6 #Higher ignore threshold --> plot less audio noise in the 3D mesh
 PREV_WEIGHT = 0.5 #Weight to assign to previous observation (to 'smooth' peaks)
 TRANSLUCENCY = 0.9 #Translucency of faces in mesh
 SCALE = 0.00005 #Weight to scale the heights (smaller = shallower mesh)
@@ -138,17 +138,23 @@ class Terrain(object):
         proposed_heights = S.flatten() * SCALE
         return proposed_heights
 
+    def get_colors(proposed_heights):
+        """Given an array of proposed heights, return proposed colors for faces"""
+        grid = proposed_heights.reshape(self.grid_height, self.grid_width)
+        return NotImplementedError
+
     def update(self):
         """Update the mesh heights with audio stream"""
         # Every read of data contains chunk * sample_width * n_channels bytes
         data = self.wf.readframes(self.chunk)
+
         channel_matrix = to_channel_matrix(data, n_channels = self.wf.getnchannels())
         mono = to_mono(channel_matrix, np.sum)  
 
         proposed_heights = self.visualizer(mono)
 
         # Crude denoising
-        #proposed_heights[proposed_heights < IGNORE_THRESHOLD] = 0
+        proposed_heights[proposed_heights < IGNORE_THRESHOLD] = 0
 
         # Set mesh heights
         new_heights = self.verts[:,2]*PREV_WEIGHT + proposed_heights*(1-PREV_WEIGHT) # weight previous height
