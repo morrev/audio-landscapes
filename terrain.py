@@ -14,16 +14,16 @@ SCREENDIM = (0, 110, 1920, 1080)
 CAMERA_DISTANCE = 70
 CAMERA_ELEVATION = 8
 STEPSIZE = 0.8 #Lower = more granular mesh (more compute)
-REFRESH_MS = 2 #Number of milliseconds between refresh: setting too high results in audio buffer underrun
+REFRESH_MS = 4 #Number of milliseconds between refresh: setting too high results in audio buffer underrun
 X_MIN = -16; X_MAX = 16
 Y_MIN = -16; Y_MAX = 16
 #AUDIO_FILE = './data/Bach_Canon_2_from_Musical_offering.wav' 
 AUDIO_FILE = './data/Chopin_op28_excerpt.wav'
 #AUDIO_FILE = './data/francois_couperin.wav'
-IGNORE_THRESHOLD = 0.5 #Higher ignore threshold --> plot less audio noise in the 3D mesh
+IGNORE_THRESHOLD = 1.1 #Higher ignore threshold --> plot less audio noise in the 3D mesh
 PREV_WEIGHT = 0.5 #Weight to assign to previous observation (to 'smooth' peaks)
 TRANSLUCENCY = 0.9 #Translucency of faces in mesh
-SCALE_DOWN = 0.005 #Weight to scale down the heights (smaller = less high)
+SCALE_DOWN = 0.008 #Weight to scale down the heights (smaller = less high)
 
 class Terrain(object):
     def _setverts(self):
@@ -97,31 +97,53 @@ class Terrain(object):
         # Initialize audio stream
         self._setaudiostream()
 
-    def update(self):
-        """Update the mesh heights with audio stream"""
-        data = self.wf.readframes(self.chunk)
-        self.stream.write(data)
-        data = np.array(struct.unpack(str(self.num_bytes) + 'B', data), dtype = 'b')
-       
+    def _get_channels(self, data):
+        """Return channels given frames of data"""
+        #print({1:np.int8, 2:np.int16, 4:np.int32}[self.wf.getsampwidth()])
+        data = np.frombuffer(data, dtype='b')
+        n_channels = self.wf.getnchannels()
         # Skip every nchannel entry in the bytes array to extract a single channel
+        channels = [data[i::n_channels] for i in range(n_channels)]
+        return channels
+
+    def _get_wav_byte_heights(self, data):
+        """Return proposed mesh heights based on bytes in frames from data"""
         # Then sample every other byte to match the 3D grid mesh size (chunk)
         # Add 128 since 'b' datatype supports -128 to 128, and we want positive jumps in the grid mesh
-        channel_zero = data[0::self.wf.getnchannels()]
-        channel_one = data[1::self.wf.getnchannels()]
-        
-        channel = ((channel_zero + channel_one)[::self.wf.getsampwidth()] + 128) * SCALE_DOWN
-        #channel_zero = (data[0::self.wf.getnchannels()][::self.wf.getsampwidth()] + 128) * SCALE_DOWN
+        channels = self._get_channels(data)
+        proposed_heights = ((channels[0]+channels[1])[::self.wf.getsampwidth()] + 128) * SCALE_DOWN
+        return proposed_heights
+
+    def update(self):
+        """Update the mesh heights with audio stream"""
+        # Every read of data contains chunk * sample_width * n_channels bytes
+        data = self.wf.readframes(self.chunk)
+       
+        #frequencies, times, spectogram = signal 
+        proposed_heights = self._get_wav_byte_heights(data)
 
         # Crude denoising
-        channel[channel < IGNORE_THRESHOLD] = 0
+        proposed_heights[proposed_heights < IGNORE_THRESHOLD] = 0
 
         # Set mesh heights
-        new_height = self.verts[:,2]*PREV_WEIGHT + (channel * 2)*(1-PREV_WEIGHT) # weight previous height
-        self.verts[:,2] = new_height
-
+        new_heights = self.verts[:,2]*PREV_WEIGHT + proposed_heights*(1-PREV_WEIGHT) # weight previous height
+        self.verts[:,2] = new_heights
+        
+        # Play audio sound
+        self.stream.write(data)
+        
+        # Update mesh heights
         self.mesh.setMeshData(
-            vertexes=self.verts, faces=self.faces, faceColors=self.colors
+            vertexes=self.verts, 
+            faces=self.faces, 
+            faceColors=self.colors
         )
+        
+        # Prevent underruns by filling with silence
+        free = self.stream.get_write_available()
+        if free > self.chunk: # Play silence if more free space in buffer than the chunk
+            self.stream.write(chr(0) * (free - self.chunk))
+
 
     def start(self):
         """
