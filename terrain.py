@@ -37,7 +37,7 @@ def to_channel_matrix(data, n_channels):
     return channel_matrix
 
 def to_mono(channel_matrix, agg_function = np.mean):
-    """Aggregate multichannel matrix (from e.g. into mono"""
+    """Aggregate multichannel matrix (from e.g. stereo into mono) using agg_function"""
     agged_matrix = agg_function(channel_matrix, axis = 0)
     return agged_matrix
 
