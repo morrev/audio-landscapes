@@ -1,4 +1,4 @@
-Music landscapes
+Audio landscapes
 ==========
 
 3D visualization of audio files (currently .wav only).
