@@ -12,22 +12,21 @@ from scipy import signal
 import contextlib
 import os
 import matplotlib.cm as cm
-from matplotlib.colors import Normalize
 
 SUPPRESS_WARNINGS = True
-SCREENDIM = (0, 110, 1920, 1080)
-CAMERA_DISTANCE = 70
+SCREENDIM = (0, 110, 1920, 1080) #Dimensions of QtGui QApplication window
+CAMERA_DISTANCE = 110
 CAMERA_ELEVATION = 8
 STEPSIZE = 1 #Lower = more granular mesh (more compute)
-REFRESH_MS = 5 #Number of milliseconds between refresh: setting too high results in audio buffer underrun
-X_MIN = -16; X_MAX = 16
-Y_MIN = -16; Y_MAX = 16
+REFRESH_MS = 10 #Number of milliseconds between refresh: setting too high results in audio buffer underrun
+X_MIN = -32; X_MAX = 32
+Y_MIN = -32; Y_MAX = 32
 VISUALIZER = 'spectrogram'
-IGNORE_THRESHOLD = 0.3 #Higher ignore threshold --> plot less audio noise in the 3D mesh
+IGNORE_THRESHOLD = 0.5 #Higher ignore threshold --> plot less audio noise in the 3D mesh
 PREV_WEIGHT = 0.3 #Weight to assign to previous observation (to 'smooth' peaks)
 TRANSLUCENCY = 0.8 #Translucency of faces in mesh
-SCALE = 0.00005 #Weight to scale the heights (smaller = shallower mesh)
-    
+SCALE = 0.1 #Scale heights: larger = higher
+
 def to_channel_matrix(data, n_channels):
     """Return channels given frames of data"""
     # todo: dynamic dtype? {1:np.int8, 2:np.int16, 4:np.int32}[self.wf.getsampwidth()]
@@ -40,6 +39,17 @@ def to_mono(channel_matrix, agg_function = np.mean):
     """Aggregate multichannel matrix (from e.g. stereo into mono) using agg_function"""
     agged_matrix = agg_function(channel_matrix, axis = 0)
     return agged_matrix
+
+def fit_to_shape(matrix, height, width):
+    """
+    Pad and truncate numpy matrix to shape (e.g. for plotting spectrogram)
+    Example usage: fit_to_shape(S, self.grid_height, self.grid_width)
+    """
+    matrix = matrix[:height,:width]
+    h_pad = max([0, width - matrix.shape[1]])
+    v_pad = max([0, height - matrix.shape[0]])
+    padded_matrix = np.pad(matrix, ((0,v_pad),(0,h_pad)))
+    return padded_matrix
 
 @contextlib.contextmanager
 def ignore_stderr():
@@ -106,25 +116,21 @@ class Terrain(object):
         ], dtype=np.float32)
 
         # Chunk is the number of points in the grid: determines # frames/buffer (i.e. coincident audio samples per buffer) 
-        self.chunk = self.verts.shape[0]
+        self.chunk = len(self.verts)
         self.grid_width = len(xx); self.grid_height = len(yy)
         print(f"Chunk (frames/buffer): {self.chunk}")
 
     def _setfaces(self):
         """Create triangular faces"""
         faces = []
-        #colors = []
         for y in range(self.grid_width - 1):
-            yoff = y * self.grid_width
-            for x in range(self.grid_width - 1):
-                faces.append([x + yoff, x + yoff + self.grid_width, x + yoff + self.grid_width + 1])
-                faces.append([x + yoff, x + yoff + 1, x + yoff + 1 + self.grid_width])
-                #colors.append([x / self.grid_width, 1 - x / self.grid_width, y / self.grid_width, TRANSLUCENCY-0.1])
-                #colors.append([x / self.grid_width, 1 - x / self.grid_width, y / self.grid_width, TRANSLUCENCY])
+            yoff = y * self.grid_height
+            for x in range(self.grid_height - 1):
+                faces.append([x + yoff, x + yoff + self.grid_height, x + yoff + self.grid_height + 1])
+                faces.append([x + yoff, x + yoff + 1, x + yoff + self.grid_height + 1])
         self.faces = np.array(faces)
-        #self.colors = np.array(colors)
         self.colors = self._get_colors(np.zeros(self.chunk))
-
+        
     def _setaudiostream(self, audio_filename):
         """Set audio stream"""
         self.wf = wave.open(audio_filename, 'rb')
@@ -152,12 +158,14 @@ class Terrain(object):
 
     def _get_spectrogram_heights(self, mono):
         """Return proposed mesh heights based on spectrogram, given mono values from wav"""
-        frequencies, times, S = signal.spectrogram(mono, nperseg = 64)
-        S = S[:self.grid_height,:self.grid_width]
-        h_pad = max([0, self.grid_width - S.shape[1]])
-        v_pad = max([0, self.grid_height - S.shape[0]])
-        proposed_heights = np.pad(S, ((0,v_pad),(0,h_pad))).flatten()
-        proposed_heights = proposed_heights.flatten() * SCALE
+        frequencies, times, S = signal.spectrogram(mono, 
+            fs = 10, #self.wf.getframerate(),
+            nperseg = (2*self.grid_width) - 1,
+            noverlap = 20, # higher noverlap leads to smoothing of spectrogram across time axis
+            window = 'hann'
+        )
+        S = fit_to_shape(S, self.grid_width, self.grid_height).flatten()
+        proposed_heights = SCALE * np.log(S)
         assert(len(proposed_heights)==self.chunk)
         return proposed_heights
 
@@ -169,51 +177,49 @@ class Terrain(object):
         return self.cmap(face_color_idx)
 
     def update(self):
-        """Update the mesh heights with audio stream"""
+        """Update the mesh heights and play audio stream"""
         # Every read of data contains chunk * sample_width * n_channels bytes
         data = self.wf.readframes(self.chunk)
 
-        channel_matrix = to_channel_matrix(data, n_channels = self.wf.getnchannels())
-        mono = to_mono(channel_matrix, np.sum)  
+        # If audio file hasn't ended (i.e. not all chunks have been read)...
+        if data:
+            channel_matrix = to_channel_matrix(data, n_channels = self.wf.getnchannels())
+            mono = to_mono(channel_matrix, np.sum)  
 
-        proposed_heights = self.visualizer(mono)
+            proposed_heights = self.visualizer(mono)
 
-        # Crude denoising
-        proposed_heights[proposed_heights < IGNORE_THRESHOLD] = 0
+            # Crude denoising
+            proposed_heights[proposed_heights < IGNORE_THRESHOLD] = 0
 
-        # Set mesh heights
-        new_heights = self.verts[:,2]*PREV_WEIGHT + proposed_heights*(1-PREV_WEIGHT) # weight previous height
-        self.verts[:,2] = new_heights
+            # Set mesh heights
+            new_heights = self.verts[:,2]*PREV_WEIGHT + proposed_heights*(1-PREV_WEIGHT) # weight previous height
+            self.verts[:,2] = new_heights
+            
+            # Play audio sound
+            self.stream.write(data)
+            
+            # Set face colors
+            new_face_colors = self._get_colors(new_heights)
+
+            # Update mesh heights
+            self.mesh.setMeshData(
+                vertexes = self.verts, 
+                faces = self.faces, 
+                faceColors = new_face_colors
+            )
         
-        # Play audio sound
-        self.stream.write(data)
-        
-        # Set face colors
-        new_face_colors = self._get_colors(new_heights)
-
-        # Update mesh heights
-        self.mesh.setMeshData(
-            vertexes = self.verts, 
-            faces = self.faces, 
-            faceColors = new_face_colors
-        )
-        
-        # Prevent underruns by filling with silence
+        # Prevent underruns by filling with silence if have more than chunksize free space in the buffer
         free = self.stream.get_write_available()
-        if free > self.chunk: # Play silence if more free space in buffer than the chunk
+        if free > self.chunk:
             self.stream.write(chr(0) * (free - self.chunk))
 
     def start(self):
-        """
-        get the graphics window open and setup
-        """
+        """Open graphics window"""
         if (sys.flags.interactive != 1) or not hasattr(QtCore, 'PYQT_VERSION'):
             QtGui.QApplication.instance().exec()
 
     def animation(self):
-        """
-        calls the update method to run in a loop
-        """
+        """Call update to refresh plot (and play audio chunk)"""
         timer = QtCore.QTimer()
         timer.timeout.connect(self.update)
         timer.start(REFRESH_MS) #time in milliseconds between each call to method
@@ -227,5 +233,5 @@ if __name__ == '__main__':
     
     # Suppress pyaudio stderr messages
     with (ignore_stderr() if SUPPRESS_WARNINGS else contextlib.nullcontext()) as silence:
-        t = Terrain(audio_filename = args.audio_filename, visualizer = VISUALIZER, cmap = cm.bone, cmap_agger = np.mean)
+        t = Terrain(audio_filename = args.audio_filename, visualizer = VISUALIZER, cmap = cm.afmhot, cmap_agger = np.mean)
         t.animation()
