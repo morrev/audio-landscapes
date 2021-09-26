@@ -4,26 +4,24 @@
 import numpy as np
 from pyqtgraph.Qt import QtCore, QtGui
 import pyqtgraph.opengl as gl
-import struct
 import sys
-import librosa
 import pyaudio
 import wave
+import argparse
 from scipy import signal
+import contextlib
+import os
 
 SCREENDIM = (0, 110, 1920, 1080)
 CAMERA_DISTANCE = 70
 CAMERA_ELEVATION = 8
 STEPSIZE = 1 #Lower = more granular mesh (more compute)
-REFRESH_MS = 10 #Number of milliseconds between refresh: setting too high results in audio buffer underrun
+REFRESH_MS = 5 #Number of milliseconds between refresh: setting too high results in audio buffer underrun
 X_MIN = -16; X_MAX = 16
 Y_MIN = -16; Y_MAX = 16
-AUDIO_FILE = './data/Bach_Canon_2_from_Musical_offering.wav' 
-#AUDIO_FILE = './data/Chopin_op28_excerpt.wav'
-#AUDIO_FILE = './data/francois_couperin.wav'
 VISUALIZER = 'spectrogram'
-IGNORE_THRESHOLD = 0.6 #Higher ignore threshold --> plot less audio noise in the 3D mesh
-PREV_WEIGHT = 0.5 #Weight to assign to previous observation (to 'smooth' peaks)
+IGNORE_THRESHOLD = 1.0 #Higher ignore threshold --> plot less audio noise in the 3D mesh
+PREV_WEIGHT = 0.3 #Weight to assign to previous observation (to 'smooth' peaks)
 TRANSLUCENCY = 0.9 #Translucency of faces in mesh
 SCALE = 0.00005 #Weight to scale the heights (smaller = shallower mesh)
     
@@ -40,8 +38,23 @@ def to_mono(channel_matrix, agg_function = np.mean):
     agged_matrix = agg_function(channel_matrix, axis = 0)
     return agged_matrix
 
+@contextlib.contextmanager
+def ignore_stderr():
+    """Suppress pyaudio stderr warning messages"""
+    # https://stackoverflow.com/questions/36956083/how-can-the-terminal-output-of-executables-run-by-python-functions-be-silenced-i/36966379#36966379
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    old_stderr = os.dup(2)
+    sys.stderr.flush()
+    os.dup2(devnull, 2)
+    os.close(devnull)
+    try:
+        yield
+    finally:
+        os.dup2(old_stderr, 2)
+        os.close(old_stderr)
+
 class Terrain(object):
-    def __init__(self, visualizer = 'spectrogram'):
+    def __init__(self, audio_filename, visualizer = 'spectrogram'):
         """Initialize the graphics window, mesh, and audio stream"""
         # Set up the view window
         self.app = QtGui.QApplication(sys.argv)
@@ -65,7 +78,7 @@ class Terrain(object):
         self.window.addItem(self.mesh)
     
         # Initialize audio stream
-        self._setaudiostream()
+        self._setaudiostream(audio_filename)
 
     def _setvisualizer(self, visualizer):
         if visualizer == 'spectrogram':
@@ -103,9 +116,9 @@ class Terrain(object):
         self.colors = np.array(colors)
         print(self.faces.shape)
 
-    def _setaudiostream(self):
+    def _setaudiostream(self, audio_filename):
         """Set audio stream"""
-        self.wf = wave.open(AUDIO_FILE, 'rb')
+        self.wf = wave.open(audio_filename, 'rb')
         p = pyaudio.PyAudio()
         
         self.stream = p.open(format = p.get_format_from_width(self.wf.getsampwidth()),
@@ -193,11 +206,10 @@ class Terrain(object):
         self.update()
 
 if __name__ == '__main__':
-    #print("Preparing audio data...")
-    #y, sample_rate = librosa.load('data/Toccata_et_Fugue_BWV565.ogg')
-    #S = librosa.feature.melspectrogram(y=y, sr=sample_rate)
-    #S_dB = librosa.power_to_db(S, ref=np.max)
-    #print("Done")
-    #print(S_dB.shape)
-    t = Terrain(visualizer = VISUALIZER)
-    t.animation()
+    # Suppress pyaudio stderr messages
+    with ignore_stderr() as silence:
+        parser = argparse.ArgumentParser()
+        parser.add_argument("-f", "--audio_filename", required = True, help = "Enter .wav filepath")
+        args = parser.parse_args()
+        t = Terrain(audio_filename = args.audio_filename, visualizer = VISUALIZER)
+        t.animation()
