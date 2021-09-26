@@ -9,6 +9,12 @@ Hobby project for:
 * familiarization w/ audio formats (buffering, channels, underruns)
 * exploration of 3D visualization options
 
+Examples:
+----
+```python terrain.py -f data/audio_file.wav```
+![Example](/images/cmap_hot_example.png)
+![Example](/images/cmap_bone_example.png)
+
 Visualizer options:
 ----
 
@@ -21,12 +27,6 @@ Visualizer options:
 * **ignore_threshold**: rounds down to zero for any values below threshold (crude 'denoising')
 * *other parameters defined in terrain.py*
 
-Examples:
-----
-```python terrain.py -f data/audio_file.wav```
-![Example](/images/cmap_hot_example.png)
-![Example](/images/cmap_bone_example.png)
-
 Useful links:
 ----
 * [Audio buffer explanation](https://techpubs.jurassic.nl/manuals/0650/developer/DMSDK_PG/sgi_html/ch08.html)
@@ -34,4 +34,4 @@ Useful links:
 
 Attribution/credits:
 ----
-Baseline 3D mesh code from [Audio-Spectrum-Analyzer-in-Python](https://github.com/markjay4k/Audio-Spectrum-Analyzer-in-Python), refactored and modified to accept .wav files (instead of live audio input)
+* Baseline 3D mesh code from [Audio-Spectrum-Analyzer-in-Python](https://github.com/markjay4k/Audio-Spectrum-Analyzer-in-Python): heavily refactored for efficiency and modified to accept .wav files and allow customization/parameters
