@@ -11,7 +11,10 @@ import argparse
 from scipy import signal
 import contextlib
 import os
+import matplotlib.cm as cm
+from matplotlib.colors import Normalize
 
+SUPPRESS_WARNINGS = True
 SCREENDIM = (0, 110, 1920, 1080)
 CAMERA_DISTANCE = 70
 CAMERA_ELEVATION = 8
@@ -20,9 +23,9 @@ REFRESH_MS = 5 #Number of milliseconds between refresh: setting too high results
 X_MIN = -16; X_MAX = 16
 Y_MIN = -16; Y_MAX = 16
 VISUALIZER = 'spectrogram'
-IGNORE_THRESHOLD = 1.0 #Higher ignore threshold --> plot less audio noise in the 3D mesh
+IGNORE_THRESHOLD = 0.3 #Higher ignore threshold --> plot less audio noise in the 3D mesh
 PREV_WEIGHT = 0.3 #Weight to assign to previous observation (to 'smooth' peaks)
-TRANSLUCENCY = 0.9 #Translucency of faces in mesh
+TRANSLUCENCY = 0.8 #Translucency of faces in mesh
 SCALE = 0.00005 #Weight to scale the heights (smaller = shallower mesh)
     
 def to_channel_matrix(data, n_channels):
@@ -54,7 +57,7 @@ def ignore_stderr():
         os.close(old_stderr)
 
 class Terrain(object):
-    def __init__(self, audio_filename, visualizer = 'spectrogram'):
+    def __init__(self, audio_filename, visualizer = 'spectrogram', cmap = cm.autumn, cmap_agger = np.mean):
         """Initialize the graphics window, mesh, and audio stream"""
         # Set up the view window
         self.app = QtGui.QApplication(sys.argv)
@@ -64,11 +67,17 @@ class Terrain(object):
         self.window.setWindowTitle('Terrain')
         self.window.setCameraPosition(distance = CAMERA_DISTANCE, elevation = CAMERA_ELEVATION)
         
-        self._setverts()
-        self._setfaces()
+        # Define the color map (from matplotlib.cm)
+        # cmap_agger defines how to aggregate face vertex heights to determine the face color
+        self.cmap = cmap
+        self.cmap_agger = np.mean
+
+        # Define the visualizer (raw bytes or spectrogram)
         self.visualizer = self._setvisualizer(visualizer)
 
         # Create the mesh item
+        self._setverts()
+        self._setfaces()
         self.mesh = gl.GLMeshItem(
             vertexes = self.verts,
             faces = self.faces, faceColors = self.colors,
@@ -104,17 +113,17 @@ class Terrain(object):
     def _setfaces(self):
         """Create triangular faces"""
         faces = []
-        colors = []
+        #colors = []
         for y in range(self.grid_width - 1):
             yoff = y * self.grid_width
             for x in range(self.grid_width - 1):
                 faces.append([x + yoff, x + yoff + self.grid_width, x + yoff + self.grid_width + 1])
                 faces.append([x + yoff, x + yoff + 1, x + yoff + 1 + self.grid_width])
-                colors.append([x / self.grid_width, 1 - x / self.grid_width, y / self.grid_width, TRANSLUCENCY-0.1])
-                colors.append([x / self.grid_width, 1 - x / self.grid_width, y / self.grid_width, TRANSLUCENCY])
+                #colors.append([x / self.grid_width, 1 - x / self.grid_width, y / self.grid_width, TRANSLUCENCY-0.1])
+                #colors.append([x / self.grid_width, 1 - x / self.grid_width, y / self.grid_width, TRANSLUCENCY])
         self.faces = np.array(faces)
-        self.colors = np.array(colors)
-        print(self.faces.shape)
+        #self.colors = np.array(colors)
+        self.colors = self._get_colors(np.zeros(self.chunk))
 
     def _setaudiostream(self, audio_filename):
         """Set audio stream"""
@@ -144,17 +153,20 @@ class Terrain(object):
     def _get_spectrogram_heights(self, mono):
         """Return proposed mesh heights based on spectrogram, given mono values from wav"""
         frequencies, times, S = signal.spectrogram(mono, nperseg = 64)
-        #h_pad = self.grid_width - S.shape[1]
-        #v_pad = self.grid_height - S.shape[0]
         S = S[:self.grid_height,:self.grid_width]
-        #proposed_heights = np.pad(frequencies, ((0,v_pad),(0,h_pad))).flatten()
-        proposed_heights = S.flatten() * SCALE
+        h_pad = max([0, self.grid_width - S.shape[1]])
+        v_pad = max([0, self.grid_height - S.shape[0]])
+        proposed_heights = np.pad(S, ((0,v_pad),(0,h_pad))).flatten()
+        proposed_heights = proposed_heights.flatten() * SCALE
+        assert(len(proposed_heights)==self.chunk)
         return proposed_heights
 
-    def get_colors(proposed_heights):
+    def _get_colors(self, proposed_heights):
         """Given an array of proposed heights, return proposed colors for faces"""
-        grid = proposed_heights.reshape(self.grid_height, self.grid_width)
-        return NotImplementedError
+        # Get heights of each vertex defining each face, for each face
+        vertex_heights = proposed_heights[self.faces] 
+        face_color_idx = self.cmap_agger(vertex_heights, axis = 1)
+        return self.cmap(face_color_idx)
 
     def update(self):
         """Update the mesh heights with audio stream"""
@@ -176,11 +188,14 @@ class Terrain(object):
         # Play audio sound
         self.stream.write(data)
         
+        # Set face colors
+        new_face_colors = self._get_colors(new_heights)
+
         # Update mesh heights
         self.mesh.setMeshData(
-            vertexes=self.verts, 
-            faces=self.faces, 
-            faceColors=self.colors
+            vertexes = self.verts, 
+            faces = self.faces, 
+            faceColors = new_face_colors
         )
         
         # Prevent underruns by filling with silence
@@ -206,10 +221,11 @@ class Terrain(object):
         self.update()
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-f", "--audio_filename", required = True, help = "Enter .wav filepath")
+    args = parser.parse_args()
+    
     # Suppress pyaudio stderr messages
-    with ignore_stderr() as silence:
-        parser = argparse.ArgumentParser()
-        parser.add_argument("-f", "--audio_filename", required = True, help = "Enter .wav filepath")
-        args = parser.parse_args()
-        t = Terrain(audio_filename = args.audio_filename, visualizer = VISUALIZER)
+    with (ignore_stderr() if SUPPRESS_WARNINGS else contextlib.nullcontext()) as silence:
+        t = Terrain(audio_filename = args.audio_filename, visualizer = VISUALIZER, cmap = cm.bone, cmap_agger = np.mean)
         t.animation()
