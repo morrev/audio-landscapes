@@ -3,7 +3,8 @@ Audio landscapes
 
 3D visualization of audio files (currently .wav only).
 
-Computes spectrogram on stream of .wav chunks to define vertex heights on 3D triangle mesh (or optionally, the raw byte values can be plotted), with customizable color map and options.
+Computes FFT on windows of .wav chunks to define vertex heights on 3D triangle mesh, with customizable color map and other options.
+X axis is time; y axis is frequency.
 
 Hobby project for:
 * familiarization w/ audio formats (buffering, channels, underruns)
@@ -21,9 +22,7 @@ Visualizer options:
 * **audio_filename**: filepath of .wav file to play (and plot)
 * **cmap**: matplotlib colormap to use for plotting [(options)](https://matplotlib.org/stable/tutorials/colors/colormaps.html)
 * **cmap_agger**: method to use to reduce a set of three vertices (defining a face) into a single value (by default, np.mean)
-* **visualizer**: "spectrogram" or "bytes": plot spectrogram, or raw byte values
 * **refresh_ms**: time between each plot refresh, in milliseconds
-* **prev_weight**: weight to assign to previous timestep heights (to 'smooth' peaks)
 * **ignore_threshold**: rounds down to zero for any values below threshold (crude 'denoising')
 * *other parameters defined in terrain.py*
 
